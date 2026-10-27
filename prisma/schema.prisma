@@ -1,0 +1,323 @@
+// Triada POS — esquema Prisma (PostgreSQL)
+// Contrato: docs/API_CONTRACT.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+enum UserRole {
+  ADMIN
+  CASHIER
+  WAITER
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+}
+
+enum OrderStatus {
+  OPEN
+  PAID
+  CANCELLED // solo datos históricos; no se crean nuevos
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+}
+
+enum CashMovementType {
+  INCOME
+  EXPENSE
+}
+
+enum CashRegisterStatus {
+  OPEN
+  CLOSED
+}
+
+enum PrinterConnection {
+  BLUETOOTH
+  NETWORK
+  USB
+}
+
+enum PrinterPurpose {
+  CASHIER
+  KITCHEN
+  BAR
+}
+
+// ---------- Modelos ----------
+model Restaurant {
+  id               String   @id @default(cuid())
+  name             String
+  ruc              String?
+  address          String?
+  phone            String?
+  taxRate          Decimal  @default(15) @db.Decimal(5, 2)
+  pricesIncludeTax Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  users         User[]
+  products      Product[]
+  areas         Area[]
+  tables        Table[]
+  orders        Order[]
+  sales         Sale[]
+  payments      Payment[]
+  cashRegisters CashRegister[]
+  cashMovements CashMovement[]
+  printers      Printer[]
+
+  @@index([createdAt])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  password     String
+  role         UserRole @default(WAITER)
+  isActive     Boolean  @default(true)
+  restaurantId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant          Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  orders              Order[]
+  sales               Sale[]
+  openedCashRegisters CashRegister[] @relation("CashRegisterOpenedBy")
+  closedCashRegisters CashRegister[] @relation("CashRegisterClosedBy")
+  cashMovements       CashMovement[]
+  refreshTokens       RefreshToken[]
+
+  @@index([restaurantId, role])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique // sha256 hex del refresh token
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  price        Decimal  @db.Decimal(10, 2)
+  taxable      Boolean  @default(true)
+  available    Boolean  @default(true)
+  restaurantId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+
+  @@index([restaurantId, name])
+  @@index([restaurantId, available])
+}
+
+model Area {
+  id           String   @id @default(cuid())
+  name         String
+  restaurantId String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  tables     Table[]
+
+  @@unique([restaurantId, name])
+}
+
+model Table {
+  id           String      @id @default(cuid())
+  name         String
+  seats        Int?
+  status       TableStatus @default(AVAILABLE)
+  areaId       String
+  restaurantId String
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  area       Area       @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  orders     Order[]
+
+  @@unique([restaurantId, name])
+  @@index([areaId])
+  @@index([restaurantId, status])
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  number       Int         @unique @default(autoincrement())
+  tableId      String?
+  userId       String
+  restaurantId String
+  customerName String?
+  notes        String?
+  subtotal     Decimal     @default(0) @db.Decimal(10, 2)
+  tax          Decimal     @default(0) @db.Decimal(10, 2)
+  total        Decimal     @default(0) @db.Decimal(10, 2)
+  status       OrderStatus @default(OPEN)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  table      Table?      @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  restaurant Restaurant  @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  items      OrderItem[]
+  sale       Sale?
+
+  @@index([restaurantId, status])
+  @@index([restaurantId, createdAt])
+  @@index([tableId, status])
+  @@index([userId])
+}
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String
+  quantity    Int
+  price       Decimal @db.Decimal(10, 2)
+  taxable     Boolean @default(true)
+  subtotal    Decimal @db.Decimal(10, 2)
+  notes       String?
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Sale {
+  id             String   @id @default(cuid())
+  orderId        String   @unique
+  userId         String
+  restaurantId   String
+  cashRegisterId String
+  subtotal       Decimal  @db.Decimal(10, 2)
+  tax            Decimal  @db.Decimal(10, 2)
+  total          Decimal  @db.Decimal(10, 2)
+  cashAmount     Decimal  @default(0) @db.Decimal(10, 2)
+  transferAmount Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order        Order        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  cashRegister CashRegister @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  payments     Payment[]
+
+  @@index([restaurantId, createdAt])
+  @@index([cashRegisterId])
+  @@index([userId])
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  saleId         String
+  method         PaymentMethod
+  amount         Decimal       @db.Decimal(10, 2)
+  reference      String?
+  restaurantId   String
+  cashRegisterId String
+  createdAt      DateTime      @default(now())
+
+  sale         Sale         @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  cashRegister CashRegister @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+
+  @@index([saleId])
+  @@index([cashRegisterId, method])
+  @@index([restaurantId, createdAt])
+}
+
+// Una sola caja OPEN por restaurante: índice único parcial creado a mano en la migración
+// ("CashRegister_one_open_per_restaurant"); Prisma no soporta índices parciales en el schema.
+model CashRegister {
+  id            String             @id @default(cuid())
+  status        CashRegisterStatus @default(OPEN)
+  openedAt      DateTime           @default(now())
+  closedAt      DateTime?
+  initialAmount Decimal            @db.Decimal(10, 2)
+  expectedCash  Decimal?           @db.Decimal(10, 2)
+  countedCash   Decimal?           @db.Decimal(10, 2)
+  difference    Decimal?           @db.Decimal(10, 2)
+  notes         String?
+  closingNotes  String?
+  openedById    String
+  closedById    String?
+  restaurantId  String
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  openedBy   User           @relation("CashRegisterOpenedBy", fields: [openedById], references: [id], onDelete: Restrict)
+  closedBy   User?          @relation("CashRegisterClosedBy", fields: [closedById], references: [id], onDelete: Restrict)
+  restaurant Restaurant     @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  movements  CashMovement[]
+  sales      Sale[]
+  payments   Payment[]
+
+  @@index([restaurantId, status])
+  @@index([restaurantId, openedAt])
+}
+
+// Solo movimientos manuales de efectivo (las ventas se calculan desde Payment)
+model CashMovement {
+  id             String           @id @default(cuid())
+  type           CashMovementType
+  amount         Decimal          @db.Decimal(10, 2)
+  reason         String
+  cashRegisterId String
+  restaurantId   String
+  userId         String
+  createdAt      DateTime         @default(now())
+
+  cashRegister CashRegister @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  restaurant   Restaurant   @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([cashRegisterId, type])
+  @@index([restaurantId, createdAt])
+}
+
+model Printer {
+  id             String            @id @default(cuid())
+  name           String
+  connectionType PrinterConnection
+  address        String?
+  paperWidth     Int               @default(80)
+  purpose        PrinterPurpose
+  isDefault      Boolean           @default(false)
+  isActive       Boolean           @default(true)
+  restaurantId   String
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+
+  @@index([restaurantId, purpose])
+}
