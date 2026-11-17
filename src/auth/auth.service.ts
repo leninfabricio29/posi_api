@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toUserDto, userSelect, UserRow } from '../modules/users/user.mapper';
 import { JwtPayload } from './auth-user';
 
-const ACCESS_TTL = '1h';
+const ACCESS_TTL = '24h';
 const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export const sha256 = (value: string) => createHash('sha256').update(value).digest('hex');
