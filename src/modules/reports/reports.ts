@@ -1,5 +1,5 @@
 import { BadRequestException, Controller, Get, Injectable, Module, Query } from '@nestjs/common';
-import { Prisma, UserRole } from '@prisma/client';
+import { CashMovementType, Prisma, UserRole } from '@prisma/client';
 import { Matches } from 'class-validator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthUser, CurrentUser, Roles } from '../../auth/auth-user';
@@ -36,21 +36,29 @@ export class ReportsService {
     if (q.from > q.to) throw new BadRequestException('La fecha "from" no puede ser mayor que "to"');
     if (daysBetween(q.from, q.to) + 1 > 366) throw new BadRequestException('El rango máximo es de 366 días');
 
-    const sales = await this.prisma.sale.findMany({
-      where: { restaurantId, createdAt: { gte, lt } },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        user: { select: { name: true } },
-        order: {
-          select: {
-            number: true,
-            customerName: true,
-            table: { select: { name: true } },
-            items: { select: { productId: true, productName: true, quantity: true, subtotal: true } },
+    const [sales, expensesAgg] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: { restaurantId, createdAt: { gte, lt } },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          user: { select: { name: true } },
+          order: {
+            select: {
+              number: true,
+              customerName: true,
+              table: { select: { name: true } },
+              items: { select: { productId: true, productName: true, quantity: true, subtotal: true } },
+            },
           },
         },
-      },
-    });
+      }),
+      // Egresos de caja registrados en el rango (todas las cajas del restaurante)
+      this.prisma.cashMovement.aggregate({
+        where: { restaurantId, type: CashMovementType.EXPENSE, createdAt: { gte, lt } },
+        _sum: { amount: true },
+        _count: { _all: true },
+      }),
+    ]);
 
     // byDay: todos los días del rango
     const byDay = new Map<string, Bucket>();
@@ -104,6 +112,8 @@ export class ReportsService {
         cash: toNum(totals.cash),
         transfer: toNum(totals.transfer),
         averageTicket: totals.count ? toNum(round2(totals.total.div(totals.count))) : 0,
+        expenses: toNum(expensesAgg._sum.amount ?? 0),
+        expenseCount: expensesAgg._count._all,
       },
       byDay: [...byDay.entries()].map(([date, b]) => ({ date, ...bucketDto(b) })),
       byWeek: [...byWeek.entries()].map(([weekStart, b]) => ({ weekStart, weekEnd: addDays(weekStart, 6), ...bucketDto(b) })),

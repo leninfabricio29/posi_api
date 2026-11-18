@@ -175,7 +175,7 @@ El PDF del cierre lo genera el **front** con `CashRegisterSummary`.
 ```ts
 SalesReport = {
   from, to,
-  totals: { count, subtotal, tax, total, cash, transfer, averageTicket: number },
+  totals: { count, subtotal, tax, total, cash, transfer, averageTicket, expenses, expenseCount: number },  // expenses = egresos de caja en el rango
   byDay: { date: 'YYYY-MM-DD', count, total, cash, transfer }[],   // todos los días del rango, también en 0
   byWeek: { weekStart: 'YYYY-MM-DD', weekEnd: 'YYYY-MM-DD', count, total, cash, transfer }[],  // semanas lunes-domingo
   topProducts: { productId, name, quantity, total }[],             // top 10 por total
